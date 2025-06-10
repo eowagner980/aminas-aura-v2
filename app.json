@@ -1,0 +1,30 @@
+{
+  "expo": {
+    "name": "Aminas Aura",
+    "slug": "aminas-aura-v2",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "splash": {
+      "image": "./assets/splash-icon.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#ffffff"
+    },
+    "assetBundlePatterns": [
+      "**/*"
+    ],
+    "ios": {
+      "supportsTablet": true
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/icon.png",
+        "backgroundColor": "#FFFFFF"
+      },
+      "package": "com.pekisar270.aminasaurav2"
+    },
+    "web": {
+      "favicon": "./assets/icon.png"
+    }
+  }
+}
