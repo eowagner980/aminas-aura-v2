@@ -31,6 +31,40 @@ import NetInfo from '@react-native-community/netinfo';
 import { useFonts, PlayfairDisplay_600SemiBold } from '@expo-google-fonts/playfair-display';
 import { Poppins_400Regular, Poppins_500Medium, Poppins_600SemiBold } from '@expo-google-fonts/poppins';
 
+// --- Error Boundary Component ---
+// This component will catch JavaScript errors anywhere in the app,
+// and display a fallback UI instead of a blank screen.
+class ErrorBoundary extends React.Component {
+  constructor(props) {
+    super(props);
+    this.state = { hasError: false, error: null };
+  }
+
+  static getDerivedStateFromError(error) {
+    // Update state so the next render will show the fallback UI.
+    return { hasError: true, error };
+  }
+
+  componentDidCatch(error, errorInfo) {
+    // You can also log the error to an error reporting service
+    console.error("Uncaught error:", error, errorInfo);
+  }
+
+  render() {
+    if (this.state.hasError) {
+      // You can render any custom fallback UI
+      return (
+        <View style={styles.errorContainer}>
+          <Text style={styles.errorTitle}>Something went wrong.</Text>
+          <Text style={styles.errorMessage}>An unexpected error occurred. Please try restarting the app.</Text>
+        </View>
+      );
+    }
+
+    return this.props.children; 
+  }
+}
+
 // --- Backend Configuration ---
 const BIN_ID = '684632fb8960c979a5a6d012'; 
 const API_KEY = '$2a$10$29zKNT6hruUMkLUoxNEPR.K49EnNhwz0uXOAwgx6s1RnFavfvl4s.';
@@ -718,12 +752,7 @@ const NotepadScreen = () => {
     const loadNotes = async () => {
         try {
             const jsonValue = await AsyncStorage.getItem(STORAGE_KEY);
-            if (jsonValue !== null) {
-                const loadedNotes = JSON.parse(jsonValue);
-                // Initial sort by date when loading
-                const sorted = loadedNotes.sort((a, b) => new Date(b.date) - new Date(a.date));
-                setNotes(sorted);
-            }
+            if (jsonValue !== null) setNotes(JSON.parse(jsonValue));
         } catch (e) {
             console.error("Failed to load notes.", e);
         }
@@ -731,16 +760,17 @@ const NotepadScreen = () => {
 
     const saveNotes = async (newNotes) => {
         try {
-            const jsonValue = JSON.stringify(newNotes);
+            // Sort notes by date, newest first
+            const sortedNotes = newNotes.sort((a, b) => new Date(b.date) - new Date(a.date));
+            const jsonValue = JSON.stringify(sortedNotes);
             await AsyncStorage.setItem(STORAGE_KEY, jsonValue);
-            setNotes(newNotes);
+            setNotes(sortedNotes);
         } catch (e) {
             console.error("Failed to save notes.", e);
         }
     };
 
     const handleSaveNote = (noteToSave) => {
-        // Do not save if both title and content are empty
         if (!noteToSave.title.trim() && !noteToSave.content.trim()) {
             setModalVisible(false);
             setEditingNote(null);
@@ -749,38 +779,31 @@ const NotepadScreen = () => {
 
         let newNotes;
         if (editingNote && editingNote.id) {
-            // --- Editing an existing note ---
+             // More robust update logic
             const noteIndex = notes.findIndex(n => n.id === editingNote.id);
             if (noteIndex > -1) {
-                // Update the note in its current position
                 const updatedNote = { ...notes[noteIndex], ...noteToSave, date: new Date().toISOString() };
                 newNotes = [...notes];
                 newNotes[noteIndex] = updatedNote;
-                // BUG FIX: Do NOT sort the array on edit. Let the note stay in place.
-                // This prevents the "wrong note locked" issue.
             } else {
-                // Should not happen, but as a fallback, do nothing to the array
-                newNotes = [...notes]; 
+                newNotes = [...notes]; // Should not happen, but as a fallback
             }
         } else {
-            // --- Creating a new note ---
+            // Creating new note
             const newNote = {
                 id: Date.now().toString(),
                 ...noteToSave,
                 date: new Date().toISOString(),
             };
-            // Add the new note to the beginning of the array
             newNotes = [newNote, ...notes];
         }
-
         saveNotes(newNotes);
         setModalVisible(false);
         setEditingNote(null);
     };
 
     const handleDeleteNote = (id) => {
-        const newNotes = notes.filter(note => note.id !== id);
-        saveNotes(newNotes);
+        saveNotes(notes.filter(note => note.id !== id))
     };
 
     const handleOpenModalForEdit = (note, colorPair) => {
@@ -790,39 +813,27 @@ const NotepadScreen = () => {
     };
 
     const handleOpenModalForNew = () => {
-        // Explicitly set editingNote to null to signify a new note
-        setEditingNote(null); 
-        // Choose a color for the new note
+        setEditingNote(null); // This is key to fixing the glitch
+        // Assign a color for the new note based on how many notes there are
         setModalColorPair(COLORS.noteCardColors[notes.length % COLORS.noteCardColors.length]);
         setModalVisible(true);
     };
-    
-    const handleCloseModal = () => {
-        setModalVisible(false);
-        // Ensure editing state is cleared when modal is closed without saving
-        setEditingNote(null);
-    };
 
     const notesToDisplay = useMemo(() => {
-        let filteredNotes = notes;
-
-        if (activeFilter === 'Favorites') {
-            filteredNotes = filteredNotes.filter(note => note.isFavorite);
-        }
-
-        if (searchQuery) {
-            const searchLower = searchQuery.toLowerCase();
-            filteredNotes = filteredNotes.filter(note => 
-                note.title.toLowerCase().includes(searchLower) || 
-                note.content.toLowerCase().includes(searchLower)
-            );
-        }
-        
-        // The main list is now sorted once on load and new notes are prepended.
-        // We can apply a sort here if we want displayed notes to be sorted differently
-        // but for now, we will respect the manual order.
-        return filteredNotes;
-
+        return notes
+            .filter(note => {
+                if (searchQuery === '') return true;
+                const searchLower = searchQuery.toLowerCase();
+                const titleMatch = note.title.toLowerCase().includes(searchLower);
+                const contentMatch = note.content.toLowerCase().includes(searchLower);
+                return titleMatch || contentMatch;
+            })
+            .filter(note => {
+                if (activeFilter === 'Favorites') {
+                    return note.isFavorite;
+                }
+                return true;
+            });
     }, [notes, searchQuery, activeFilter]);
     
     return (
@@ -861,7 +872,7 @@ const NotepadScreen = () => {
                     numColumns={2}
                     contentContainerStyle={{ paddingHorizontal: 8, paddingTop: 10, paddingBottom: 100 }}
                     renderItem={({ item, index }) => {
-                        // Find the original index to maintain consistent color mapping
+                        // Use the note's creation order to determine color, not its display order
                         const originalIndex = notes.findIndex(n => n.id === item.id);
                         const colorPair = COLORS.noteCardColors[originalIndex % COLORS.noteCardColors.length];
                         return (
@@ -876,7 +887,7 @@ const NotepadScreen = () => {
             ) : (
                 <View style={styles.notepadEmptyContainer}>
                     <FontAwesome5 name="file-alt" size={48} color={COLORS.accentSecondary} />
-                    <Text style={styles.notepadEmptyText}>{searchQuery || activeFilter === 'Favorites' ? 'No matching notes found.' : 'Create your first note!'}</Text>
+                    <Text style={styles.notepadEmptyText}>Create your first note!</Text>
                 </View>
             )}
 
@@ -889,13 +900,12 @@ const NotepadScreen = () => {
             
             {/* Edit/Create Modal */}
             <EditNoteModal
-                // The key ensures the component fully re-mounts when switching between notes
-                key={editingNote ? editingNote.id : 'new-note-modal'}
+                key={editingNote ? editingNote.id : 'new-note'}
                 isVisible={isModalVisible}
                 note={editingNote}
                 colorPair={modalColorPair}
                 onSave={handleSaveNote}
-                onClose={handleCloseModal}
+                onClose={() => setModalVisible(false)}
                 onDelete={handleDeleteNote}
             />
         </View>
@@ -935,23 +945,11 @@ const NoteCard = ({ note, onPress, colorPair }) => {
 };
 
 const EditNoteModal = ({ isVisible, note, onSave, onClose, onDelete, colorPair }) => {
-    // State is initialized based on the 'note' prop.
-    const [title, setTitle] = useState(note?.title || '');
-    const [content, setContent] = useState(note?.content || '');
-    const [isFavorite, setIsFavorite] = useState(note?.isFavorite || false);
-    const [isLocked, setIsLocked] = useState(note?.isLocked || false);
+    const [title, setTitle] = useState(note ? note.title : '');
+    const [content, setContent] = useState(note ? note.content : '');
+    const [isFavorite, setIsFavorite] = useState(note ? note.isFavorite : false);
+    const [isLocked, setIsLocked] = useState(note ? note.isLocked : false);
     const [isDeleteConfirmVisible, setDeleteConfirmVisible] = useState(false);
-
-    // BUG FIX: This useEffect hook robustly resets the modal's state whenever the `note` prop changes.
-    // This is more reliable than relying only on component remounting via key.
-    // It guarantees that opening a new note (where `note` is null) clears the fields.
-    useEffect(() => {
-        setTitle(note?.title || '');
-        setContent(note?.content || '');
-        setIsFavorite(note?.isFavorite || false);
-        setIsLocked(note?.isLocked || false);
-    }, [note]);
-
 
     const handleSave = () => {
         onSave({ title, content, isFavorite, isLocked });
@@ -1413,18 +1411,16 @@ const TimerInputModal = ({ isVisible, onClose, onSetTimer }) => {
     );
 };
 
-// --- Main App Component ---
-export default function App() {
-  const [fontsLoaded, fontError] = useFonts({ PlayfairDisplay_600SemiBold, Poppins_400Regular, Poppins_500Medium, Poppins_600SemiBold });
-  const [activeTab, setActiveTab] = useState('Quotes');
-  const [isPlayerModalVisible, setPlayerModalVisible] = useState(false);
-  const [isTimerInputVisible, setTimerInputVisible] = useState(false);
-  const [permissionGranted, setPermissionGranted] = useState(null);
-  const [isLoading, setIsLoading] = useState(false);
-  const [playbackStatus, setPlaybackStatus] = useState(null);
+const AppContent = () => {
+    const [activeTab, setActiveTab] = useState('Quotes');
+    const [isPlayerModalVisible, setPlayerModalVisible] = useState(false);
+    const [isTimerInputVisible, setTimerInputVisible] = useState(false);
+    const [permissionGranted, setPermissionGranted] = useState(null);
+    const [isLoading, setIsLoading] = useState(false);
+    const [playbackStatus, setPlaybackStatus] = useState(null);
   
-  const soundObject = useRef(new Audio.Sound());
-  const [musicAppState, setMusicAppState] = useState({
+    const soundObject = useRef(new Audio.Sound());
+    const [musicAppState, setMusicAppState] = useState({
       playlist: [], 
       currentTrack: null, 
       sleepTimerId: null, 
@@ -1435,22 +1431,22 @@ export default function App() {
       showFavoritesOnly: false,
       currentGradient: COLORS.musicPlayerPastelGradients[0],
       currentAvatar: musicPlayerAvatarNames[0],
-  });
+    });
 
-  const { currentTrack, playlist, sleepTimerId, isShuffleOn, repeatMode, sort, showFavoritesOnly, searchQuery, currentGradient, currentAvatar } = musicAppState;
-  const isPlaying = playbackStatus?.isLoaded && playbackStatus.isPlaying;
-  const STORAGE_KEY = '@AminaAura:playlist';
+    const { currentTrack, playlist, sleepTimerId, isShuffleOn, repeatMode, sort, showFavoritesOnly, searchQuery, currentGradient, currentAvatar } = musicAppState;
+    const isPlaying = playbackStatus?.isLoaded && playbackStatus.isPlaying;
+    const STORAGE_KEY = '@AminaAura:playlist';
 
-  const displayedSongs = useMemo(() => {
+    const displayedSongs = useMemo(() => {
     let songs = [...playlist];
     if (showFavoritesOnly) songs = songs.filter(s => s.isFavorite);
     if (searchQuery) songs = songs.filter(s => s.filename.toLowerCase().includes(searchQuery.toLowerCase()));
     if (sort.type === 'alpha') { songs.sort((a, b) => a.filename.localeCompare(b.filename)); if (sort.order === 'desc') songs.reverse() }
     else if (sort.type === 'date') { songs.sort((a, b) => (b.creationTime || 0) - (a.creationTime || 0)); if (sort.order === 'asc') songs.reverse() }
     return songs;
-  }, [playlist, searchQuery, sort, showFavoritesOnly]);
+    }, [playlist, searchQuery, sort, showFavoritesOnly]);
 
-  const handleNext = useCallback((didJustFinish = false) => {
+    const handleNext = useCallback((didJustFinish = false) => {
       if (!currentTrack || displayedSongs.length === 0) return;
       let nextIndex;
       const currentIndex = displayedSongs.findIndex(t => t.id === currentTrack.id);
@@ -1473,9 +1469,9 @@ export default function App() {
           nextIndex = (currentIndex + 1) % displayedSongs.length;
       }
       handleSelectTrack(displayedSongs[nextIndex]);
-  }, [currentTrack, displayedSongs, isShuffleOn, repeatMode, soundObject]);
+    }, [currentTrack, displayedSongs, isShuffleOn, repeatMode, soundObject]);
 
-  const handlePlaybackStatusUpdate = useCallback((status) => {
+    const handlePlaybackStatusUpdate = useCallback((status) => {
     setPlaybackStatus(status);
     if (status.didJustFinish) {
         if (repeatMode === 'one') {
@@ -1484,61 +1480,90 @@ export default function App() {
             handleNext(true);
         }
     }
-  }, [repeatMode, handleNext, soundObject]);
+    }, [repeatMode, handleNext, soundObject]);
   
-  const handleSelectTrack = (track, avatar) => {
-      if (!track) return;
+    const handleSelectTrack = (track, avatar) => {
+        if (!track) return;
 
-      const trackIndex = playlist.findIndex(t => t.id === track.id);
-      const newGradient = COLORS.musicPlayerPastelGradients[trackIndex % COLORS.musicPlayerPastelGradients.length];
-      const newAvatar = avatar || musicPlayerAvatarNames[trackIndex % musicPlayerAvatarNames.length];
+        const trackIndex = playlist.findIndex(t => t.id === track.id);
+        const newGradient = COLORS.musicPlayerPastelGradients[trackIndex % COLORS.musicPlayerPastelGradients.length];
+        const newAvatar = avatar || musicPlayerAvatarNames[trackIndex % musicPlayerAvatarNames.length];
 
-      setMusicAppState(prev => ({ 
-          ...prev, 
-          currentTrack: track, 
-          currentGradient: newGradient, 
-          currentAvatar: newAvatar 
-      }));
+        setMusicAppState(prev => ({ 
+            ...prev, 
+            currentTrack: track, 
+            currentGradient: newGradient, 
+            currentAvatar: newAvatar 
+        }));
 
-      setTimeout(async () => {
-          try {
-              const status = await soundObject.current.getStatusAsync();
-              if (status.isLoaded) {
-                  await soundObject.current.unloadAsync();
-              }
-              await soundObject.current.loadAsync({ uri: track.uri }, { shouldPlay: true });
-          } catch (e) {
-              console.error("Failed to play track", e);
-              Alert.alert("Playback Error", "Could not play the selected track.");
-              setMusicAppState(prev => ({...prev, currentTrack: null}));
-          }
-      }, 50);
-  };
+        setTimeout(async () => {
+            try {
+                const status = await soundObject.current.getStatusAsync();
+                if (status.isLoaded) {
+                    await soundObject.current.unloadAsync();
+                }
+                await soundObject.current.loadAsync({ uri: track.uri }, { shouldPlay: true });
+            } catch (e) {
+                console.error("Failed to play track", e);
+                Alert.alert("Playback Error", "Could not play the selected track.");
+                setMusicAppState(prev => ({...prev, currentTrack: null}));
+            }
+        }, 50);
+    };
 
-  useEffect(() => {
-    Audio.setAudioModeAsync({ allowsRecordingIOS: false, playsInSilentModeIOS: true, staysActiveInBackground: true, shouldDuckAndroid: true, playThroughEarpieceAndroid: false });
-    soundObject.current.setOnPlaybackStatusUpdate(handlePlaybackStatusUpdate);
+    useEffect(() => {
+        const setupAudio = async () => {
+            try {
+                await Audio.setAudioModeAsync({ allowsRecordingIOS: false, playsInSilentModeIOS: true, staysActiveInBackground: true, shouldDuckAndroid: true, playThroughEarpieceAndroid: false });
+                soundObject.current.setOnPlaybackStatusUpdate(handlePlaybackStatusUpdate);
+            } catch(e) {
+                console.error("Failed to set audio mode", e);
+            }
+        }
+        
+        const requestPermissions = async () => {
+             try {
+                const { status } = await MediaLibrary.requestPermissionsAsync(); 
+                if (status !== 'granted') Alert.alert("Permission Required", "This app needs permission to access your audio files."); 
+                setPermissionGranted(status === 'granted');
+             } catch(e) {
+                 console.error("Failed to request permissions", e);
+                 setPermissionGranted(false);
+             }
+        }
+
+        const loadPlaylist = async () => { 
+            try {
+                const jsonValue = await AsyncStorage.getItem(STORAGE_KEY); 
+                if (jsonValue) setMusicAppState(prev => ({...prev, playlist: JSON.parse(jsonValue)}));
+            } catch(e) {
+                console.error("Failed to load playlist", e);
+            }
+        };
+
+        setupAudio();
+        requestPermissions();
+        loadPlaylist();
     
-    (async () => { const { status } = await MediaLibrary.requestPermissionsAsync(); if (status !== 'granted') Alert.alert("Permission Required", "This app needs permission to access your audio files."); setPermissionGranted(status === 'granted') })();
-    
-    const loadPlaylist = async () => { const jsonValue = await AsyncStorage.getItem(STORAGE_KEY); if (jsonValue) setMusicAppState(prev => ({...prev, playlist: JSON.parse(jsonValue)})) };
-    loadPlaylist();
-    
-    return () => { 
-        soundObject.current.unloadAsync(); 
-        if(musicAppState.sleepTimerId) clearTimeout(musicAppState.sleepTimerId);
-    }
-  }, []);
+        return () => { 
+            soundObject.current.unloadAsync(); 
+            if(musicAppState.sleepTimerId) clearTimeout(musicAppState.sleepTimerId);
+        }
+    }, []);
 
-  const handlePlayPause = async () => { 
-      const status = await playbackStatus; 
-      if (!status?.isLoaded) { 
-          if (playlist.length > 0) handleSelectTrack(playlist[0]); 
-          return;
-      } 
-      if (status.isPlaying) await soundObject.current.pauseAsync(); 
-      else await soundObject.current.playAsync() 
-  };
+    const handlePlayPause = async () => { 
+        try {
+            const status = await playbackStatus; 
+            if (!status?.isLoaded) { 
+                if (playlist.length > 0) handleSelectTrack(playlist[0]); 
+                return;
+            } 
+            if (status.isPlaying) await soundObject.current.pauseAsync(); 
+            else await soundObject.current.playAsync();
+        } catch(e) {
+            console.error("Error with play/pause", e);
+        }
+    };
   
   const handlePrevious = () => { 
       if (!currentTrack || displayedSongs.length <= 1) return; 
@@ -1566,8 +1591,6 @@ export default function App() {
         } catch (error) { console.error(error); Alert.alert("Error refreshing playlist.") } finally { setIsLoading(false) }
   };
 
-  if (!fontsLoaded && !fontError) return null;
-
   const renderScreen = () => {
     switch (activeTab) {
       case 'Quotes': return <QuotesScreen />;
@@ -1592,9 +1615,63 @@ export default function App() {
   );
 }
 
+// --- Main App Component ---
+export default function App() {
+  const [fontsLoaded, fontError] = useFonts({ PlayfairDisplay_600SemiBold, Poppins_400Regular, Poppins_500Medium, Poppins_600SemiBold });
+
+  if (fontError) {
+    return (
+        <View style={styles.errorContainer}>
+            <Text style={styles.errorTitle}>Font Error</Text>
+            <Text style={styles.errorMessage}>Failed to load the required fonts. Please restart the app.</Text>
+        </View>
+    );
+  }
+
+  if (!fontsLoaded) {
+      return (
+          <View style={styles.loadingContainer}>
+              <ActivityIndicator size="large" color={COLORS.accentPrimary} />
+          </View>
+      )
+  }
+
+  return (
+    <ErrorBoundary>
+      <AppContent />
+    </ErrorBoundary>
+  );
+}
+
 
 // --- Stylesheet ---
 const styles = StyleSheet.create({
+  loadingContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: COLORS.bgMain,
+  },
+  errorContainer: {
+      flex: 1,
+      justifyContent: 'center',
+      alignItems: 'center',
+      padding: 20,
+      backgroundColor: COLORS.bgMain,
+  },
+  errorTitle: {
+      fontSize: 22,
+      fontFamily: FONT_FAMILY.playfair,
+      color: COLORS.accentPrimaryDarker,
+      textAlign: 'center',
+      marginBottom: 10,
+  },
+  errorMessage: {
+      fontSize: 16,
+      fontFamily: FONT_FAMILY.poppins,
+      color: COLORS.textSecondary,
+      textAlign: 'center',
+  },
   container: { flex: 1, backgroundColor: COLORS.bgMain, paddingTop: Platform.OS === 'android' ? 35 : 0 },
   header: { padding: 15, alignItems: 'center', borderBottomWidth: 1, borderBottomColor: COLORS.borderColor },
   headerTitle: { fontSize: 24, color: COLORS.accentPrimaryDarker, fontFamily: FONT_FAMILY.playfair },
